@@ -1,3 +1,5 @@
+## PixelOS 17.0 · 10 November 2026
+
 **System**
 - November 2026 Android security patch
 - Signed with my own release keys (one clean flash needed if you're coming from a build before 10 November)
