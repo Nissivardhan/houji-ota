@@ -8,7 +8,7 @@
         "os_sdk_level": 37,
         "sha256": "abf8205ddbc1ba458cbcce6b0fb085e0ea8f19f5869f289004573b389d93ba66",
         "size": 4064642041,
-        "url": "https://sourceforge.net/projects/houji-builds/files/PixelOS/PixelOS_houji-17.0-20261110.zip/download",
+        "url": "https://ferrari.serverhive.in/nissivardhan/PixelOS_houji-17.0-20261110.zip",
         "ota_property_files": "payload_metadata.bin:4854:250199,payload.bin:4854:4064633039,payload_properties.txt:4064637951:156,apex_info.pb:2236:1580,care_map.pb:3863:944,metadata:69:688,metadata.pb:825:1363                        "
       }
     ],
