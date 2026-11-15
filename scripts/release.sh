@@ -163,10 +163,17 @@ if bash "$OTA/upload-sf-file.sh" "houji-target_files-$TAG.zip" target_files > "$
 else
   echo "target files upload FAILED - the release can still go out, but upload them before the server ends"
 fi
+# new files on SourceForge are listed at once but 404 for a while (seen up to ~15 min):
+# wait for them, so the feed never offers a link that doesn't download yet
 for u in "PixelOS/$NAME" $( [ $HAVE_INCR = 1 ] && echo "PixelOS/incremental/$INCR" ); do
-  code="$(curl -sL -o /dev/null -r 0-1023 -m 60 -w '%{http_code}' "$SF_BASE/$u/download")"
+  for try in $(seq 1 40); do
+    code="$(curl -sL -o /dev/null -r 0-1023 -m 60 -w '%{http_code}' "$SF_BASE/$u/download" || true)"
+    [ "$code" = 206 ] || [ "$code" = 200 ] && break
+    [ $try = 1 ] && echo "waiting for SourceForge to serve $u (got $code)..."
+    sleep 30
+  done
   echo "link check $code  $u"
-  [ "$code" = 206 ] || [ "$code" = 200 ] || { echo "SourceForge doesn't serve it yet - wait a few minutes and re-run step 5 by hand"; exit 1; }
+  [ "$code" = 206 ] || [ "$code" = 200 ] || { echo "SourceForge still doesn't serve it after 20 min - re-run step 5 by hand later"; exit 1; }
 done
 
 say "5/6 feed and changelog"
