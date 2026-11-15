@@ -23,9 +23,11 @@
 #   2. reads the build's version and checks it is signed with our release key
 #   3. on the server: names the full zip, makes the small update from the previous
 #      build's target files, zips this build's target files, checksums everything
-#   4. uploads full zip, small update and target files to SourceForge, checks the links
+#   4. uploads the full zip to SourceForge and the small updates to a GitHub release
+#      (ota-<build> in houji-ota: works at once, SourceForge takes 5-15 min), checks the links
 #   5. moves the current changelog to houji-history.md, puts <notes.md> in its place,
 #      writes the feed entry, and asks before pushing it to GitHub
+#   then uploads the target files to SourceForge as a backup (after the feed is live)
 #   6. writes the Channel Help button layout for the Telegram post (Download =
 #      ServerHive link if given, else SourceForge) to push/ota/posts/<build>-buttons.txt
 #
@@ -67,6 +69,12 @@ srv()  { "$ROM/server.sh" "$1" 2>&1 | tr -d '\r' | grep -v -iE "password|^spawn|
 put()  { F="$1" DST="$2" expect -c 'set timeout 300; log_user 0
   spawn scp -o PubkeyAuthentication=no -o PreferredAuthentications=password -P $env(SERVER_PORT) $env(F) $env(SERVER_USER)@$env(SERVER_HOST):$env(DST)
   expect -re "(?i)password:" { send -- "$env(SERVER_PASS)\r" }; expect eof'; }
+
+# copy a file from the server home directory to a local path
+get()  { F="$1" DST="$2" expect -c 'set timeout 600; log_user 0
+  spawn scp -o PubkeyAuthentication=no -o PreferredAuthentications=password -P $env(SERVER_PORT) $env(SERVER_USER)@$env(SERVER_HOST):$env(F) $env(DST)
+  expect -re "(?i)password:" { send -- "$env(SERVER_PASS)\r" }; expect eof'; }
+GH_REL_BASE=""
 
 cleanup() {
   rm -rf "$WORK"
@@ -127,35 +135,35 @@ TF=out/target/product/houji/obj/PACKAGING/target_files_intermediates/custom_houj
 log(){ echo "\$*" >> ~/release.log; }
 : > ~/release.log
 cp -f out/target/product/houji/lineage-.zip ~/$NAME || { log "FAIL copy"; exit 1; }
-if [ -f ~/houji-target_files-$PREV_TAG.zip ]; then
-  PATH=\$PWD/out/host/linux-x86/bin:\$PATH ota_from_target_files -k vendor/lineage-priv/keys/releasekey \\
-    -i ~/houji-target_files-$PREV_TAG.zip \$TF ~/$INCR > ~/release-incr.log 2>&1 || { log "FAIL incremental"; exit 1; }
-  log "INCR ok"
-else
-  log "INCR none (no target files for $PREV_TAG on the server)"
-fi
-(cd \$TF && rm -f ~/houji-target_files-$TAG.zip && zip -qry ~/houji-target_files-$TAG.zip .) || { log "FAIL target files zip"; exit 1; }
-cd ~
-python3 pixelos_feed.py generate-ota $NAME --url $SF_BASE/PixelOS/$NAME/download --version 17.0 --output ~/release-full.json || { log "FAIL feed full"; exit 1; }
 # ro.build.date.utc of a build, from its target files: the Updater picks the small update
 # made from the build it runs by this value (source_datetime)
 utc(){ unzip -p "\$1" SYSTEM/build.prop | sed -n 's/^ro.build.date.utc=//p' | head -1; }
 tag_src(){ python3 -c 'import json,sys;f=sys.argv[1];d=json.load(open(f));e=d[0] if isinstance(d,list) else d;e["files"][0]["source_datetime"]=int(sys.argv[2]);json.dump(d,open(f,"w"))' "\$1" "\$2"; }
-if [ -f ~/$INCR ]; then
-  python3 pixelos_feed.py generate-ota $INCR --url $SF_BASE/PixelOS/incremental/$INCR/download --version 17.0 --output ~/release-incr.json || { log "FAIL feed incremental"; exit 1; }
-  tag_src ~/release-incr.json "\$(utc ~/houji-target_files-$PREV_TAG.zip)"
+OTA_GEN="ota_from_target_files -k vendor/lineage-priv/keys/releasekey"
+export PATH=\$PWD/out/host/linux-x86/bin:\$PATH
+rm -f ~/release-extra-*.json ~/release-incr.json ~/release-tf.ok
+# everything below runs at the same time: this build's target files (zip -1: much faster
+# than the default and they are mostly images anyway), the small update from the previous
+# build, and the small updates from older builds
+( cd \$TF && rm -f ~/houji-target_files-$TAG.zip && zip -1 -qry ~/houji-target_files-$TAG.zip . && touch ~/release-tf.ok ) &
+if [ -f ~/houji-target_files-$PREV_TAG.zip ]; then
+  ( \$OTA_GEN -i ~/houji-target_files-$PREV_TAG.zip \$TF ~/$INCR > ~/release-incr.log 2>&1 \\
+    && (cd ~ && python3 pixelos_feed.py generate-ota $INCR --url $SF_BASE/PixelOS/incremental/$INCR/download --version 17.0 --output ~/release-incr.json) \\
+    && tag_src ~/release-incr.json "\$(utc ~/houji-target_files-$PREV_TAG.zip)" ) &
+else
+  log "INCR none (no target files for $PREV_TAG on the server)"
 fi
-# small updates from older builds too (newest first), for phones that skipped a release
-cd ~/android/pixelos
-rm -f ~/release-extra-*.json
 for OLD in $EXTRA_TAGS; do
-  X=incremental_houji_\${OLD}_to_$TAG.zip
-  PATH=\$PWD/out/host/linux-x86/bin:\$PATH ota_from_target_files -k vendor/lineage-priv/keys/releasekey \\
-    -i ~/houji-target_files-\$OLD.zip \$TF ~/\$X > ~/release-extra-\$OLD.log 2>&1 || { log "EXTRA \$OLD failed"; continue; }
-  (cd ~ && python3 pixelos_feed.py generate-ota \$X --url $SF_BASE/PixelOS/incremental/\$X/download --version 17.0 --output ~/release-extra-\$OLD.json) || { log "EXTRA \$OLD feed failed"; continue; }
-  tag_src ~/release-extra-\$OLD.json "\$(utc ~/houji-target_files-\$OLD.zip)"
-  log "EXTRA \$OLD ok"
+  ( X=incremental_houji_\${OLD}_to_$TAG.zip
+    \$OTA_GEN -i ~/houji-target_files-\$OLD.zip \$TF ~/\$X > ~/release-extra-\$OLD.log 2>&1 \\
+    && (cd ~ && python3 pixelos_feed.py generate-ota \$X --url $SF_BASE/PixelOS/incremental/\$X/download --version 17.0 --output ~/release-extra-\$OLD.json) \\
+    && tag_src ~/release-extra-\$OLD.json "\$(utc ~/houji-target_files-\$OLD.zip)" \\
+    && log "EXTRA \$OLD ok" || log "EXTRA \$OLD failed" ) &
 done
+(cd ~ && python3 pixelos_feed.py generate-ota $NAME --url $SF_BASE/PixelOS/$NAME/download --version 17.0 --output ~/release-full.json) || { log "FAIL feed full"; exit 1; }
+wait
+[ -f ~/houji-target_files-$PREV_TAG.zip ] && { [ -s ~/release-incr.json ] && log "INCR ok" || { log "FAIL incremental"; exit 1; }; }
+[ -f ~/release-tf.ok ] || { log "FAIL target files zip"; exit 1; }
 log "DONE"
 EOF
 put "$WORK/post.sh" release-post.sh
@@ -173,45 +181,54 @@ echo "$ST"
 echo "$ST" | grep -q "^DONE" || { echo "Server step did not finish - see ~/release.log and ~/release-incr.log on the server"; exit 1; }
 HAVE_INCR=0; echo "$ST" | grep -q "^INCR ok" && HAVE_INCR=1
 
-say "4/6 upload to SourceForge"
-bash "$OTA/upload-sf-file.sh" "$NAME" PixelOS > "$WORK/up1.log" 2>&1 && grep -q "^SF_UPLOAD_OK" <(tr -d '\r' < "$WORK/up1.log") || { echo "full zip upload failed"; tail -5 "$WORK/up1.log"; exit 1; }
-echo "full zip: uploaded"
-if [ $HAVE_INCR = 1 ]; then
-  bash "$OTA/upload-sf-file.sh" "$INCR" PixelOS/incremental > "$WORK/up2.log" 2>&1 && grep -q "^SF_UPLOAD_OK" <(tr -d '\r' < "$WORK/up2.log") || { echo "small update upload failed"; exit 1; }
-  echo "small update: uploaded"
-fi
+say "4/6 upload: full zip to SourceForge, small updates to GitHub"
+bash "$OTA/upload-sf-file.sh" "$NAME" PixelOS > "$WORK/up1.log" 2>&1 &
+UP1=$!
+# small updates: from the server to the Mac, then to a GitHub release (served at once)
+INCS=""
+[ $HAVE_INCR = 1 ] && INCS="$INCR"
 EXTRA_OK=""
 for OLD in $(echo "$ST" | sed -n 's/^EXTRA \(.*\) ok$/\1/p'); do
-  X="incremental_houji_${OLD}_to_${TAG}.zip"
-  if bash "$OTA/upload-sf-file.sh" "$X" PixelOS/incremental > "$WORK/up-$OLD.log" 2>&1 && grep -q "^SF_UPLOAD_OK" <(tr -d '\r' < "$WORK/up-$OLD.log"); then
-    echo "small update from $OLD: uploaded"; EXTRA_OK="$EXTRA_OK $OLD"
+  INCS="$INCS incremental_houji_${OLD}_to_${TAG}.zip"; EXTRA_OK="$EXTRA_OK $OLD"
+done
+if [ -n "$INCS" ]; then
+  mkdir -p "$WORK/inc"
+  for X in $INCS; do get "$X" "$WORK/inc/$X"; [ -s "$WORK/inc/$X" ] || { echo "could not fetch $X from the server"; exit 1; }; done
+  REL="ota-$TAG"
+  T="$(gh auth token --user "$GH_OWNER")"
+  if GH_TOKEN="$T" gh release view "$REL" --repo "$GH_OWNER/houji-ota" >/dev/null 2>&1; then
+    GH_TOKEN="$T" gh release upload "$REL" --clobber --repo "$GH_OWNER/houji-ota" "$WORK"/inc/*.zip >/dev/null
   else
-    echo "small update from $OLD: upload failed, left out"
+    GH_TOKEN="$T" gh release create "$REL" --repo "$GH_OWNER/houji-ota" --title "$VER small updates" \
+      --notes "Small (incremental) updates to $VER, used by the Updater." "$WORK"/inc/*.zip >/dev/null
   fi
-done
-if bash "$OTA/upload-sf-file.sh" "houji-target_files-$TAG.zip" target_files > "$WORK/up3.log" 2>&1 && grep -q "^SF_UPLOAD_OK" <(tr -d '\r' < "$WORK/up3.log"); then
-  echo "target files: uploaded"
-else
-  echo "target files upload FAILED - the release can still go out, but upload them before the server ends"
-fi
-# new files on SourceForge are listed at once but 404 for a while (seen up to ~15 min):
-# wait for them, so the feed never offers a link that doesn't download yet
-for u in "PixelOS/$NAME" $( [ $HAVE_INCR = 1 ] && echo "PixelOS/incremental/$INCR" ) $(for o in $EXTRA_OK; do echo "PixelOS/incremental/incremental_houji_${o}_to_${TAG}.zip"; done); do
-  for try in $(seq 1 40); do
-    code="$(curl -sL -o /dev/null -r 0-1023 -m 60 -w '%{http_code}' "$SF_BASE/$u/download" || true)"
-    [ "$code" = 206 ] || [ "$code" = 200 ] && break
-    [ $try = 1 ] && echo "waiting for SourceForge to serve $u (got $code)..."
-    sleep 30
+  unset T
+  GH_REL_BASE="https://github.com/$GH_OWNER/houji-ota/releases/download/$REL"
+  for X in $INCS; do
+    code="$(curl -sL -o /dev/null -r 0-1023 -m 60 -w '%{http_code}' "$GH_REL_BASE/$X" || true)"
+    echo "small update on GitHub: $code  $X"
+    [ "$code" = 206 ] || [ "$code" = 200 ] || { echo "GitHub doesn't serve $X"; exit 1; }
   done
-  echo "link check $code  $u"
-  [ "$code" = 206 ] || [ "$code" = 200 ] || { echo "SourceForge still doesn't serve it after 20 min - re-run step 5 by hand later"; exit 1; }
+fi
+wait $UP1 && grep -q "^SF_UPLOAD_OK" <(tr -d '\r' < "$WORK/up1.log") || { echo "full zip upload failed"; tail -5 "$WORK/up1.log"; exit 1; }
+echo "full zip: uploaded"
+# new files on SourceForge are listed at once but 404 for a while (seen up to ~15 min):
+# wait for it, so the feed never offers a link that doesn't download yet
+u="PixelOS/$NAME"
+for try in $(seq 1 40); do
+  code="$(curl -sL -o /dev/null -r 0-1023 -m 60 -w '%{http_code}' "$SF_BASE/$u/download" || true)"
+  [ "$code" = 206 ] || [ "$code" = 200 ] && break
+  [ $try = 1 ] && echo "waiting for SourceForge to serve $u (got $code)..."
+  sleep 30
 done
+echo "link check $code  $u"
+[ "$code" = 206 ] || [ "$code" = 200 ] || { echo "SourceForge still doesn't serve it after 20 min - re-run step 5 by hand later"; exit 1; }
 
 say "5/6 feed and changelog"
 srv "echo ==F; cat ~/release-full.json; echo; echo ==I; cat ~/release-incr.json 2>/dev/null; echo; echo ==END; for o in $EXTRA_OK; do echo ==X; cat ~/release-extra-\$o.json; echo; done; echo ==XEND" > "$WORK/feeds.txt"
-python3 - "$WORK/feeds.txt" "$FEED" "$NOTES" "$BETA" <<'EOF'
+python3 - "$WORK/feeds.txt" "$FEED" "$NOTES" "$BETA" "$GH_REL_BASE" <<'EOF'
 import glob, json, sys
-txt, feed, notes, beta = sys.argv[1:]
+txt, feed, notes, beta, gh_base = sys.argv[1:]
 beta = beta == '1'
 t = open(txt).read()
 full = t.split('==F\n')[1].split('==I')[0].strip()
@@ -228,6 +245,10 @@ allinc = ([F['incremental'][0]] if incr else []) + extras
 if allinc:
     F['incrementals'] = allinc
     if not incr: F['incremental'] = [extras[0]]
+# small updates are served from the GitHub release
+if gh_base:
+    for i in F.get('incremental', []) + F.get('incrementals', []):
+        i['url'] = f"{gh_base}/{i['filename']}"
 def write(path):
     with open(path, 'w') as f:
         json.dump([F], f, indent=2); f.write('\n')
@@ -283,6 +304,14 @@ for i in $(seq 1 30); do
   sleep 10
 done
 [ "$live" = "$DT" ] && echo "LIVE: $([ $BETA = 1 ] && echo "beta ")phones will now be offered $VER" || echo "Pushed, but GitHub isn't serving it yet - check again in a few minutes"
+
+say "backup: target files to SourceForge (the feed is already live)"
+if bash "$OTA/upload-sf-file.sh" "houji-target_files-$TAG.zip" target_files > "$WORK/up3.log" 2>&1 && grep -q "^SF_UPLOAD_OK" <(tr -d '\r' < "$WORK/up3.log"); then
+  echo "target files: uploaded"
+else
+  echo "target files upload FAILED - upload them by hand before the server ends:"
+  echo "  bash $OTA/upload-sf-file.sh houji-target_files-$TAG.zip target_files"
+fi
 
 say "6/6 Telegram post buttons"
 DL="${SH_URL:-$SF_BASE/PixelOS/$NAME/download}"

@@ -42,11 +42,15 @@ Steps:
 
 1. Copies the release keys to the server (removed again when the script ends, even on errors).
 2. Reads the build version and checks the zip is signed with the release key.
-3. On the server: names the full zip, builds the incremental from the build currently
-   in the feed, zips the target files, writes the feed entries.
-4. Uploads the full zip, incremental and target files to SourceForge and checks the links.
+3. On the server, all at once: names the full zip, builds the small updates (from the
+   build currently in the feed and from older builds), zips the target files, writes the
+   feed entries.
+4. Uploads the full zip to SourceForge and the small updates to a GitHub release
+   (`ota-<build>` in this repo; GitHub serves them at once, SourceForge takes 5–15 min),
+   and checks the links.
 5. Moves the current changelog into `houji-history.md`, puts `notes.md` in its place,
    updates `houji.json`, and asks `[y/N]` before pushing to GitHub.
+   Then the target files go to SourceForge as a backup, after the feed is live.
 6. Writes the Channel Help button layout to `posts/<build>-buttons.txt`
    (Download = ServerHive link if given, else SourceForge).
 
