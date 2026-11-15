@@ -1,7 +1,13 @@
 #!/bin/bash
 # Release a finished PixelOS houji build as an OTA, from the Mac, in one go.
 #
-#   bash ~/custom-rom/push/ota/release.sh <notes.md> [serverhive-link]
+#   bash ~/custom-rom/push/ota/release.sh [--beta] <notes.md> [serverhive-link]
+#
+# --beta publishes only to enrolled beta phones: every API/updater/beta/<tester-id>.json
+# gets the build, the stable feed (houji.json) and its changelog stay untouched, and the
+# small update is made from the build in the beta feed. A tester's ID is shown in
+# Updater > Preferences > Beta program; enroll a phone by copying houji.json to
+# API/updater/beta/<id>.json. A stable release also updates beta files that are older.
 #
 # [serverhive-link] is the Download link from ServerHive Bot's "Build Completed"
 # message for this build (https://artifacts.serverhive.in/?id=...). It goes on the
@@ -28,8 +34,9 @@
 # Passwords come from ~/custom-rom/.env and are never printed.
 set -euo pipefail
 
+BETA=0; [ "${1:-}" = "--beta" ] && { BETA=1; shift; }
 NOTES="${1:-}"
-[ -f "$NOTES" ] || { echo "usage: release.sh <notes.md> [serverhive-link]  (changelog for this build)"; exit 1; }
+[ -f "$NOTES" ] || { echo "usage: release.sh [--beta] <notes.md> [serverhive-link]  (changelog for this build)"; exit 1; }
 SH_URL="${2:-${SERVERHIVE_URL:-}}"
 if [ -n "$SH_URL" ]; then
   [[ "$SH_URL" =~ ^https://artifacts\.serverhive\.in/\?id=[A-Za-z0-9._-]+$ ]] || { echo "ServerHive link should look like https://artifacts.serverhive.in/?id=pixel-os-aosp-houji-..."; exit 1; }
@@ -65,7 +72,13 @@ cleanup() {
 trap cleanup EXIT
 
 # The previous release is whatever the live feed points at now
-PREV_ZIP="$(python3 -c "import json;print(json.load(open('$FEED/API/updater/houji.json'))[0]['files'][0]['filename'])")"
+# the small update starts from the build the target phones run: stable feed, or the beta feed
+PREV_FEED="$FEED/API/updater/houji.json"
+if [ $BETA = 1 ]; then
+  PREV_FEED="$(ls "$FEED"/API/updater/beta/*.json 2>/dev/null | head -1)"
+  [ -n "$PREV_FEED" ] || { echo "No enrolled beta phones (API/updater/beta/*.json)"; exit 1; }
+fi
+PREV_ZIP="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))[0]['files'][0]['filename'])" "$PREV_FEED")"
 PREV_TAG="$(echo "$PREV_ZIP" | sed -E 's/^PixelOS_houji-[0-9.]+-([0-9]{8}(-[0-9]{4})?)\.zip$/\1/')"
 
 say "1/6 keys to server"
@@ -149,9 +162,10 @@ done
 
 say "5/6 feed and changelog"
 srv 'echo ==F; cat ~/release-full.json; echo; echo ==I; cat ~/release-incr.json 2>/dev/null; echo; echo ==END' > "$WORK/feeds.txt"
-python3 - "$WORK/feeds.txt" "$FEED" "$NOTES" <<'EOF'
-import json, sys
-txt, feed, notes = sys.argv[1:]
+python3 - "$WORK/feeds.txt" "$FEED" "$NOTES" "$BETA" <<'EOF'
+import glob, json, sys
+txt, feed, notes, beta = sys.argv[1:]
+beta = beta == '1'
 t = open(txt).read()
 full = t.split('==F\n')[1].split('==I')[0].strip()
 incr = t.split('==I\n')[1].split('==END')[0].strip()
@@ -159,10 +173,24 @@ F = json.loads(full); F = F[0] if isinstance(F, list) else F
 if incr:
     I = json.loads(incr); I = I[0] if isinstance(I, list) else I
     F['incremental'] = [I['files'][0]]
-json.dump([F], open(f'{feed}/API/updater/houji.json', 'w'), indent=2)
-open(f'{feed}/API/updater/houji.json', 'a').write('\n')
-# changelog: current notes go to the top of the history, new notes become the live changelog
+def write(path):
+    with open(path, 'w') as f:
+        json.dump([F], f, indent=2); f.write('\n')
+beta_files = sorted(glob.glob(f'{feed}/API/updater/beta/*.json'))
+if beta:
+    for b in beta_files: write(b)
+    print('beta feed:', len(beta_files), 'enrolled phone(s)')
+else:
+    write(f'{feed}/API/updater/houji.json')
+    # beta phones also get a stable build that is newer than their beta build
+    for b in beta_files:
+        if json.load(open(b))[0]['datetime'] < F['datetime']: write(b)
 cl = f'{feed}/API/updater/changelogs'
+if beta:
+    print('feed:', F['files'][0]['filename'], F['files'][0]['size'], 'bytes')
+    if incr: print('small update:', F['incremental'][0]['filename'], F['incremental'][0]['size'], 'bytes')
+    sys.exit(0)
+# changelog: current notes go to the top of the history, new notes become the live changelog
 cur = open(f'{cl}/houji.md').read().strip() + '\n'
 hist = open(f'{cl}/houji-history.md').read()
 marker = 'are kept here.\n\n'
@@ -175,25 +203,27 @@ EOF
 cd "$FEED"
 git --no-pager diff --stat
 echo
-read -r -p "Publish $VER to the OTA feed now? [y/N] " ok
+CHAN="$([ $BETA = 1 ] && echo "BETA phones only" || echo "the stable OTA feed")"
+read -r -p "Publish $VER to $CHAN now? [y/N] " ok
 if [ "$ok" != "y" ] && [ "$ok" != "Y" ]; then
   git checkout -q -- API/updater
   echo "Not published. Feed and changelog left as they were."
   exit 0
 fi
 git add -A
-git commit -qm "houji: $VER$( [ $HAVE_INCR = 1 ] && echo " with incremental from $PREV_TAG")"
+git commit -qm "houji: $([ $BETA = 1 ] && echo "beta: ")$VER$( [ $HAVE_INCR = 1 ] && echo " with incremental from $PREV_TAG")"
 T="$(gh auth token --user "$GH_OWNER")"
 B="$(printf 'x-access-token:%s' "$T" | base64)"; unset T
 git -c http.extraheader="Authorization: Basic $B" push -q origin main 2>&1 | sed 's/gh[pousr]_[A-Za-z0-9]*/***/g'
 unset B
-DT="$(python3 -c "import json;print(json.load(open('API/updater/houji.json'))[0]['datetime'])")"
+CHECK="API/updater/houji.json"; [ $BETA = 1 ] && CHECK="${PREV_FEED#$FEED/}"
+DT="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))[0]['datetime'])" "$CHECK")"
 for i in $(seq 1 30); do
-  live="$(curl -s "https://raw.githubusercontent.com/$GH_OWNER/houji-ota/main/API/updater/houji.json" | python3 -c "import json,sys;print(json.load(sys.stdin)[0]['datetime'])" 2>/dev/null || true)"
+  live="$(curl -s "https://raw.githubusercontent.com/$GH_OWNER/houji-ota/main/$CHECK" | python3 -c "import json,sys;print(json.load(sys.stdin)[0]['datetime'])" 2>/dev/null || true)"
   [ "$live" = "$DT" ] && break
   sleep 10
 done
-[ "$live" = "$DT" ] && echo "LIVE: phones will now be offered $VER" || echo "Pushed, but GitHub isn't serving it yet - check again in a few minutes"
+[ "$live" = "$DT" ] && echo "LIVE: $([ $BETA = 1 ] && echo "beta ")phones will now be offered $VER" || echo "Pushed, but GitHub isn't serving it yet - check again in a few minutes"
 
 say "6/6 Telegram post buttons"
 DL="${SH_URL:-$SF_BASE/PixelOS/$NAME/download}"

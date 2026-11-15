@@ -5,7 +5,8 @@ The Updater in these builds reads `API/updater/houji.json`; the zips are hosted 
 
 | Path | What it is |
 |---|---|
-| `API/updater/houji.json` | Feed the phone's Updater checks (full zip + incremental) |
+| `API/updater/houji.json` | Stable feed the phone's Updater checks (full zip + incremental) |
+| `API/updater/beta/<id>.json` | Beta feed for one enrolled phone (invite-only) |
 | `API/updater/changelogs/houji.md` | Changelog shown in the Updater for the current build |
 | `API/updater/changelogs/houji-history.md` | Changelogs of older builds |
 | `CHANGELOG.md` | Device changelog, newest first |
@@ -29,7 +30,7 @@ and the release keys in `~/custom-rom/keys`.
 Run after `mka bacon` has finished on the build server:
 
 ```bash
-bash scripts/release.sh notes.md [serverhive-link]
+bash scripts/release.sh [--beta] notes.md [serverhive-link]
 ```
 
 - `notes.md`: changelog for this build, starting with `## PixelOS 17.0 · <date>`
@@ -50,6 +51,19 @@ Steps:
    (Download = ServerHive link if given, else SourceForge).
 
 The feed always points at SourceForge: the Updater needs a direct file link.
+
+### Beta channel (invite-only)
+
+Each phone shows a **Beta tester ID** in Updater › Preferences › Beta program (12 hex
+characters, a one-way hash of its Android ID; it changes after a factory reset). Before
+reading the stable feed, the Updater asks for `API/updater/beta/<id>.json`: if that file
+exists the phone is enrolled and gets beta builds, otherwise it reads `houji.json`.
+
+- Enroll a phone: `cp API/updater/houji.json API/updater/beta/<id>.json`, commit, push.
+- Remove a phone: delete its file.
+- Publish a test build to enrolled phones only: `bash scripts/release.sh --beta notes.md`.
+  The stable feed and changelog stay untouched; the small update is made from the beta build.
+- A stable release also updates beta files that hold an older build.
 
 ### pixelos_feed.py: feed entries
 
