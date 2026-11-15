@@ -4,7 +4,8 @@
 #   bash ~/custom-rom/push/ota/release.sh [--beta] <notes.md> [serverhive-link]
 #
 # --beta publishes only to enrolled beta phones: every API/updater/beta/<tester-id>.json
-# gets the build, the stable feed (houji.json) and its changelog stay untouched, and the
+# gets the build and <notes.md> becomes changelogs/beta/houji.md; the stable feed
+# (houji.json) and its changelog stay untouched, and the
 # small update is made from the build in the beta feed. A tester's ID is shown in
 # Updater > Preferences > Beta program; enroll a phone by copying houji.json to
 # API/updater/beta/<id>.json. A stable release also updates beta files that are older.
@@ -30,6 +31,9 @@
 #
 # The OTA feed itself always points at SourceForge: the Updater needs a direct file
 # link, and ServerHive's artifact page is a web page, not the zip.
+#
+# KEEP_KEYS=1 leaves the release keys on the server afterwards (another build is coming);
+# by default they are removed when the script ends, even on errors.
 #
 # Passwords come from ~/custom-rom/.env and are never printed.
 set -euo pipefail
@@ -66,6 +70,10 @@ put()  { F="$1" DST="$2" expect -c 'set timeout 300; log_user 0
 
 cleanup() {
   rm -rf "$WORK"
+  if [ "${KEEP_KEYS:-0}" = 1 ]; then
+    echo; echo "KEEP_KEYS=1: release keys left on the server for the next build - remove them when done"
+    return
+  fi
   echo; echo "Removing keys from the server..."
   srv 'rm -rf ~/android/pixelos/vendor/lineage-priv; [ -d ~/android/pixelos/vendor/lineage-priv ] && echo "KEYS STILL ON SERVER" || echo "keys removed"'
 }
@@ -135,7 +143,8 @@ srv 'rm -f ~/release.log ~/release-full.json ~/release-incr.json; tmux new-sessi
 # the server is often overloaded, so poll a status file instead of holding a session open
 for i in $(seq 1 120); do
   sleep 30
-  ST="$(srv 'cat ~/release.log 2>/dev/null')"
+  # an empty log (step still running) must not trip set -e/pipefail
+  ST="$(srv 'cat ~/release.log 2>/dev/null' || true)"
   echo "$ST" | grep -q -E "^(DONE|FAIL)" && break
 done
 echo "$ST"
@@ -187,6 +196,10 @@ else:
         if json.load(open(b))[0]['datetime'] < F['datetime']: write(b)
 cl = f'{feed}/API/updater/changelogs'
 if beta:
+    # beta builds have their own changelog, read by enrolled phones (latest build only)
+    import os
+    os.makedirs(f'{cl}/beta', exist_ok=True)
+    open(f'{cl}/beta/houji.md', 'w').write(open(notes).read().strip() + '\n')
     print('feed:', F['files'][0]['filename'], F['files'][0]['size'], 'bytes')
     if incr: print('small update:', F['incremental'][0]['filename'], F['incremental'][0]['size'], 'bytes')
     sys.exit(0)

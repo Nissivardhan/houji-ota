@@ -51,6 +51,7 @@ Steps:
    (Download = ServerHive link if given, else SourceForge).
 
 The feed always points at SourceForge: the Updater needs a direct file link.
+Set `KEEP_KEYS=1` to leave the release keys on the build server when another build follows.
 
 ### Beta channel (invite-only)
 
@@ -62,7 +63,8 @@ exists the phone is enrolled and gets beta builds, otherwise it reads `houji.jso
 - Enroll a phone: `cp API/updater/houji.json API/updater/beta/<id>.json`, commit, push.
 - Remove a phone: delete its file.
 - Publish a test build to enrolled phones only: `bash scripts/release.sh --beta notes.md`.
-  The stable feed and changelog stay untouched; the small update is made from the beta build.
+  `notes.md` becomes `changelogs/beta/houji.md` (shown to enrolled phones); the stable feed
+  and changelog stay untouched; the small update is made from the beta build.
 - A stable release also updates beta files that hold an older build.
 
 ### pixelos_feed.py: feed entries
