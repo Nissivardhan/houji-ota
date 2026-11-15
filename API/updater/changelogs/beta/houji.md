@@ -1,5 +1,5 @@
-## PixelOS 17.0 · 15 November 2026 (beta 5)
+## PixelOS 17.0 · 15 November 2026 (beta 6)
 
-- Updater: new option to install updates overnight (Preferences › Install updates overnight). Between 1 and 5 am, while charging on Wi-Fi; you restart when it suits you
-- Updater: small updates now also from older builds, so skipping a release no longer means the full 4 GB download
-- Everything from the earlier betas: Seedvault hung-app skip and Health Connect, Dolby fixes, beta changelog, LHDC earbuds
+- Updater: tapping Install shows the install at once; a second tap no longer makes it look failed (the Reboot button stays)
+- Updater: small updates are now downloaded from GitHub (faster to check and to start)
+- Everything from beta 5: install updates overnight, small updates from older builds
