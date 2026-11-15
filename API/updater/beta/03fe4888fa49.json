@@ -1,18 +1,29 @@
 [
   {
-    "datetime": 1794679533,
+    "datetime": 1794723926,
     "files": [
       {
-        "filename": "PixelOS_houji-17.0-20261114-1805.zip",
+        "filename": "PixelOS_houji-17.0-20261115-0625.zip",
         "os_patch_level": "2026-11-01",
         "os_sdk_level": 37,
-        "sha256": "4dccf966f26bfe19da79dbf75911ffd5d3b6149028872edeff46ac2b391a0242",
-        "size": 4064647961,
-        "url": "https://sourceforge.net/projects/houji-builds/files/PixelOS/PixelOS_houji-17.0-20261114-1805.zip/download",
-        "ota_property_files": "payload_metadata.bin:4854:250196,payload.bin:4854:4064638959,payload_properties.txt:4064643871:156,apex_info.pb:2236:1580,care_map.pb:3863:944,metadata:69:688,metadata.pb:825:1363                        "
+        "sha256": "f42a11a0f20a0caf10fcef6c493d8bc4a3719f835c22703d2a12f311106abd28",
+        "size": 4064648026,
+        "url": "https://sourceforge.net/projects/houji-builds/files/PixelOS/PixelOS_houji-17.0-20261115-0625.zip/download",
+        "ota_property_files": "payload_metadata.bin:4854:250196,payload.bin:4854:4064639024,payload_properties.txt:4064643936:156,apex_info.pb:2236:1580,care_map.pb:3863:944,metadata:69:688,metadata.pb:825:1363                        "
       }
     ],
     "type": "ci",
-    "version": "17.0"
+    "version": "17.0",
+    "incremental": [
+      {
+        "filename": "incremental_houji_20261114-1805_to_20261115-0625.zip",
+        "os_patch_level": "2026-11-01",
+        "os_sdk_level": 37,
+        "sha256": "9027118377140fec5902b44ac06bb2266d63d73c8e078a87b4ebb7e630a805f6",
+        "size": 6400476,
+        "url": "https://sourceforge.net/projects/houji-builds/files/PixelOS/incremental/incremental_houji_20261114-1805_to_20261115-0625.zip/download",
+        "ota_property_files": "payload_metadata.bin:6030:1278765,payload.bin:6030:6390300,payload_properties.txt:6396388:154,apex_info.pb:3180:1812,care_map.pb:5039:944,metadata:69:787,metadata.pb:924:2208                  "
+      }
+    ]
   }
 ]
