@@ -1,6 +1,6 @@
-## PixelOS 17.0 · 15 November 2026 (beta 3)
+## PixelOS 17.0 · 15 November 2026 (beta 4)
 
-- Dolby: fixed the Dolby audio codec service crashing on about every second boot
-- Updater: waits longer for a slow mirror before falling back to the full download
-- Updater: beta builds now show their own changelog
-- Everything from the earlier betas: LHDC earbuds play, Seedvault backup fixes, invite-only beta channel
+- Seedvault: an app that hangs during a backup is skipped for that night only, instead of being excluded for good
+- Seedvault: Health Connect is backed up again (an earlier beta had excluded it, and it is hidden from the app list)
+- Dolby Vision: fixed an SELinux denial when its service starts
+- Everything from the earlier betas: Dolby crash fix, beta changelog, LHDC earbuds, Seedvault backup fixes
