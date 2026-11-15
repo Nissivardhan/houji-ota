@@ -113,6 +113,12 @@ echo "build:    $VER (zip made $ZIPTIME), signed with our release key"
 echo "previous: $PREV_TAG (from the live feed)"
 [ "$NAME" != "$PREV_ZIP" ] || { echo "This build is already the live release"; exit 1; }
 
+# small updates are also made from up to EXTRA_INCR older builds whose target files are on the server
+EXTRA_INCR="${EXTRA_INCR:-2}"
+EXTRA_TAGS="$(srv 'ls -1t ~/houji-target_files-*.zip 2>/dev/null' | sed -nE 's#.*houji-target_files-([0-9]{8}-[0-9]{4})\.zip$#\1#p' \
+  | grep -v -x -e "$PREV_TAG" -e "$TAG" | head -n "$EXTRA_INCR" | tr '\n' ' ')"
+echo "older builds: ${EXTRA_TAGS:-none}"
+
 say "3/6 small update, target files, checksums (on the server, a few minutes)"
 cat > "$WORK/post.sh" <<EOF
 #!/bin/bash
@@ -131,9 +137,25 @@ fi
 (cd \$TF && rm -f ~/houji-target_files-$TAG.zip && zip -qry ~/houji-target_files-$TAG.zip .) || { log "FAIL target files zip"; exit 1; }
 cd ~
 python3 pixelos_feed.py generate-ota $NAME --url $SF_BASE/PixelOS/$NAME/download --version 17.0 --output ~/release-full.json || { log "FAIL feed full"; exit 1; }
+# ro.build.date.utc of a build, from its target files: the Updater picks the small update
+# made from the build it runs by this value (source_datetime)
+utc(){ unzip -p "\$1" SYSTEM/build.prop | sed -n 's/^ro.build.date.utc=//p' | head -1; }
+tag_src(){ python3 -c 'import json,sys;f=sys.argv[1];d=json.load(open(f));e=d[0] if isinstance(d,list) else d;e["files"][0]["source_datetime"]=int(sys.argv[2]);json.dump(d,open(f,"w"))' "\$1" "\$2"; }
 if [ -f ~/$INCR ]; then
   python3 pixelos_feed.py generate-ota $INCR --url $SF_BASE/PixelOS/incremental/$INCR/download --version 17.0 --output ~/release-incr.json || { log "FAIL feed incremental"; exit 1; }
+  tag_src ~/release-incr.json "\$(utc ~/houji-target_files-$PREV_TAG.zip)"
 fi
+# small updates from older builds too (newest first), for phones that skipped a release
+cd ~/android/pixelos
+rm -f ~/release-extra-*.json
+for OLD in $EXTRA_TAGS; do
+  X=incremental_houji_\${OLD}_to_$TAG.zip
+  PATH=\$PWD/out/host/linux-x86/bin:\$PATH ota_from_target_files -k vendor/lineage-priv/keys/releasekey \\
+    -i ~/houji-target_files-\$OLD.zip \$TF ~/\$X > ~/release-extra-\$OLD.log 2>&1 || { log "EXTRA \$OLD failed"; continue; }
+  (cd ~ && python3 pixelos_feed.py generate-ota \$X --url $SF_BASE/PixelOS/incremental/\$X/download --version 17.0 --output ~/release-extra-\$OLD.json) || { log "EXTRA \$OLD feed failed"; continue; }
+  tag_src ~/release-extra-\$OLD.json "\$(utc ~/houji-target_files-\$OLD.zip)"
+  log "EXTRA \$OLD ok"
+done
 log "DONE"
 EOF
 put "$WORK/post.sh" release-post.sh
@@ -158,6 +180,15 @@ if [ $HAVE_INCR = 1 ]; then
   bash "$OTA/upload-sf-file.sh" "$INCR" PixelOS/incremental > "$WORK/up2.log" 2>&1 && grep -q "^SF_UPLOAD_OK" <(tr -d '\r' < "$WORK/up2.log") || { echo "small update upload failed"; exit 1; }
   echo "small update: uploaded"
 fi
+EXTRA_OK=""
+for OLD in $(echo "$ST" | sed -n 's/^EXTRA \(.*\) ok$/\1/p'); do
+  X="incremental_houji_${OLD}_to_${TAG}.zip"
+  if bash "$OTA/upload-sf-file.sh" "$X" PixelOS/incremental > "$WORK/up-$OLD.log" 2>&1 && grep -q "^SF_UPLOAD_OK" <(tr -d '\r' < "$WORK/up-$OLD.log"); then
+    echo "small update from $OLD: uploaded"; EXTRA_OK="$EXTRA_OK $OLD"
+  else
+    echo "small update from $OLD: upload failed, left out"
+  fi
+done
 if bash "$OTA/upload-sf-file.sh" "houji-target_files-$TAG.zip" target_files > "$WORK/up3.log" 2>&1 && grep -q "^SF_UPLOAD_OK" <(tr -d '\r' < "$WORK/up3.log"); then
   echo "target files: uploaded"
 else
@@ -165,7 +196,7 @@ else
 fi
 # new files on SourceForge are listed at once but 404 for a while (seen up to ~15 min):
 # wait for them, so the feed never offers a link that doesn't download yet
-for u in "PixelOS/$NAME" $( [ $HAVE_INCR = 1 ] && echo "PixelOS/incremental/$INCR" ); do
+for u in "PixelOS/$NAME" $( [ $HAVE_INCR = 1 ] && echo "PixelOS/incremental/$INCR" ) $(for o in $EXTRA_OK; do echo "PixelOS/incremental/incremental_houji_${o}_to_${TAG}.zip"; done); do
   for try in $(seq 1 40); do
     code="$(curl -sL -o /dev/null -r 0-1023 -m 60 -w '%{http_code}' "$SF_BASE/$u/download" || true)"
     [ "$code" = 206 ] || [ "$code" = 200 ] && break
@@ -177,7 +208,7 @@ for u in "PixelOS/$NAME" $( [ $HAVE_INCR = 1 ] && echo "PixelOS/incremental/$INC
 done
 
 say "5/6 feed and changelog"
-srv 'echo ==F; cat ~/release-full.json; echo; echo ==I; cat ~/release-incr.json 2>/dev/null; echo; echo ==END' > "$WORK/feeds.txt"
+srv "echo ==F; cat ~/release-full.json; echo; echo ==I; cat ~/release-incr.json 2>/dev/null; echo; echo ==END; for o in $EXTRA_OK; do echo ==X; cat ~/release-extra-\$o.json; echo; done; echo ==XEND" > "$WORK/feeds.txt"
 python3 - "$WORK/feeds.txt" "$FEED" "$NOTES" "$BETA" <<'EOF'
 import glob, json, sys
 txt, feed, notes, beta = sys.argv[1:]
@@ -189,6 +220,14 @@ F = json.loads(full); F = F[0] if isinstance(F, list) else F
 if incr:
     I = json.loads(incr); I = I[0] if isinstance(I, list) else I
     F['incremental'] = [I['files'][0]]
+# every small update, each tagged with the build it applies to (source_datetime); older
+# Updaters only read "incremental" (exactly one file, from the previous build)
+extras = [json.loads(x.strip()) for x in t.split('==END')[1].split('==XEND')[0].split('==X\n')[1:] if x.strip()]
+extras = [(e[0] if isinstance(e, list) else e)['files'][0] for e in extras]
+allinc = ([F['incremental'][0]] if incr else []) + extras
+if allinc:
+    F['incrementals'] = allinc
+    if not incr: F['incremental'] = [extras[0]]
 def write(path):
     with open(path, 'w') as f:
         json.dump([F], f, indent=2); f.write('\n')
@@ -208,7 +247,7 @@ if beta:
     os.makedirs(f'{cl}/beta', exist_ok=True)
     open(f'{cl}/beta/houji.md', 'w').write(open(notes).read().strip() + '\n')
     print('feed:', F['files'][0]['filename'], F['files'][0]['size'], 'bytes')
-    if incr: print('small update:', F['incremental'][0]['filename'], F['incremental'][0]['size'], 'bytes')
+    for i in F.get('incrementals', F.get('incremental', [])): print('small update:', i['filename'], i['size'], 'bytes')
     sys.exit(0)
 # changelog: current notes go to the top of the history, new notes become the live changelog
 cur = open(f'{cl}/houji.md').read().strip() + '\n'
@@ -218,7 +257,7 @@ i = hist.index(marker) + len(marker)
 open(f'{cl}/houji-history.md', 'w').write(hist[:i] + cur + '\n' + hist[i:])
 open(f'{cl}/houji.md', 'w').write(open(notes).read().strip() + '\n')
 print('feed:', F['files'][0]['filename'], F['files'][0]['size'], 'bytes')
-if incr: print('small update:', F['incremental'][0]['filename'], F['incremental'][0]['size'], 'bytes')
+for i in F.get('incrementals', F.get('incremental', [])): print('small update:', i['filename'], i['size'], 'bytes')
 EOF
 cd "$FEED"
 git --no-pager diff --stat

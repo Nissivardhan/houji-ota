@@ -50,6 +50,14 @@ Steps:
 6. Writes the Channel Help button layout to `posts/<build>-buttons.txt`
    (Download = ServerHive link if given, else SourceForge).
 
+Small updates: besides the one from the build currently in the feed, the script makes
+small updates from up to `EXTRA_INCR` (default 2) older builds whose target files are
+still on the server, so a phone that skipped a release doesn't download the full zip.
+They go in the entry's `incrementals` list, each tagged with `source_datetime` (the
+`ro.build.date.utc` of the build it applies to); the Updater picks the one for the build
+it runs. `incremental` keeps exactly one file (from the previous build), because older
+Updaters reject more than one there.
+
 The feed always points at SourceForge: the Updater needs a direct file link.
 Set `KEEP_KEYS=1` to leave the release keys on the build server when another build follows.
 
